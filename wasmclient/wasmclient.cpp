@@ -14,6 +14,7 @@
 #include <emscripten.h>
 #include <emscripten/bind.h>
 #include <emscripten/threading.h>
+#include <emscripten/wasm_worker.h>
 #include <emscripten/val.h>
 #include <boost/algorithm/string.hpp>
 #include <queue>
@@ -195,10 +196,13 @@ private:
             m_Messages.push(std::move(func));
         }
         auto thisWeakPtr = std::make_unique<WeakPtr>(shared_from_this());
-        emscripten_async_run_in_main_runtime_thread(
-            EM_FUNC_SIG_VI,
-            &WalletClient2::ProcessMessageOnMainThread,
-            reinterpret_cast<int>(thisWeakPtr.release()));
+        emscripten_wasm_worker_post_function_vi(EMSCRIPTEN_WASM_WORKER_ID_PARENT,
+                                                &WalletClient2::ProcessMessageOnMainThread,
+                                                reinterpret_cast<int>(thisWeakPtr.release()));
+        //emscripten_async_run_in_main_runtime_thread(
+        //    EM_FUNC_SIG_VI,
+        //    &WalletClient2::ProcessMessageOnMainThread,
+        //    reinterpret_cast<int>(thisWeakPtr.release()));
     }
 
     void onStopped() override
@@ -560,12 +564,15 @@ public:
             if (!handler.isNull())
             {
                 auto handlerPtr = std::make_unique<val>(std::move(handler));
-                emscripten_dispatch_to_thread_async(
-                    get_thread_id(),
-                    EM_FUNC_SIG_VI,
-                    &WasmWalletClient::DoCallbackOnMainThread,
-                    nullptr,
-                    handlerPtr.release());
+                //emscripten_dispatch_to_thread_async(
+                //    get_thread_id(),
+                //    EM_FUNC_SIG_VI,
+                //    &WasmWalletClient::DoCallbackOnMainThread,
+                //    nullptr,
+                //    handlerPtr.release());
+                emscripten_wasm_worker_post_function_vi(EMSCRIPTEN_WASM_WORKER_ID_PARENT,
+                                                        &WasmWalletClient::DoCallbackOnMainThread,
+                                                        reinterpret_cast<int>(handlerPtr.release()));
             }
         });
     }
@@ -771,9 +778,10 @@ public:
         }
     }
 
-    static void DoCallbackOnMainThread(val* h)
+    static void DoCallbackOnMainThread(int h)
     {
-        std::unique_ptr<val> handler(h);
+        static_assert(sizeof(int) == sizeof(val*));
+        std::unique_ptr<val> handler(reinterpret_cast<val*>(h));
         if (!handler->isNull())
         {
             (*handler)();
@@ -878,9 +886,10 @@ public:
     }
 
     using CallbackResult = std::pair<std::shared_ptr<val>, bool>;
-    static void ProsessCallbackOnMainThread(CallbackResult* pCallback)
+    static void ProsessCallbackOnMainThread(int pCallback)
     {
-        std::unique_ptr<CallbackResult> cb(pCallback);
+        static_assert(sizeof(int) == sizeof(CallbackResult*));
+        std::unique_ptr<CallbackResult> cb(reinterpret_cast<CallbackResult*>(pCallback));
         if (!cb->first->isNull())
         {
             (*cb->first)(cb->second);
@@ -893,10 +902,13 @@ public:
         auto res = WalletDB::isValidPassword(dbName, SecString(pass));
         LOG_DEBUG() << __FUNCTION__ << TRACE(dbName) << TRACE(pass) << TRACE(res);
         auto cbPtr = std::make_unique<CallbackResult>(std::move(cb), res);
-        emscripten_async_run_in_main_runtime_thread(
-            EM_FUNC_SIG_VI,
-            &WasmWalletClient::ProsessCallbackOnMainThread,
-            reinterpret_cast<int>(cbPtr.release()));
+        //emscripten_wasm_worker_post_function_vi(EMSCRIPTEN_WASM_WORKER_ID_PARENT,
+        //                                        &WasmWalletClient::ProsessCallbackOnMainThread,
+        //                                        reinterpret_cast<int>(cbPtr.release()));
+        //emscripten_async_run_in_main_runtime_thread(
+        //    EM_FUNC_SIG_VI,
+        //    &WasmWalletClient::ProsessCallbackOnMainThread,
+        //    reinterpret_cast<int>(cbPtr.release()));
     }
 
 
@@ -923,6 +935,7 @@ public:
 
     static void MountFS(val cb)
     {
+        LOG_DEBUG() << "MountFS";
         AssertMainThread();
         s_MountCB = cb;
         if (s_Mounted)

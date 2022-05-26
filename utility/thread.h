@@ -18,21 +18,116 @@
 #include <condition_variable>
 #include "helpers.h"
 
+#if defined(__EMSCRIPTEN__)
+#include <emscripten/wasm_worker.h>
+#endif
+
 namespace beam
 {
 #if  defined(__EMSCRIPTEN__) || defined(BEAM_BUILD_THREAD_POOL)
 	class SimpleThreadPool
 	{
+#ifdef __EMSCRIPTEN__
+
+		
+		struct Worker
+		{
+			using FuncPtr = void (*)(int);
+
+			template<typename Params, size_t... I>
+			static void WorkerInvoke(int pValues)
+			{
+				std::cout << __FUNCTION__ << __LINE__ << std::endl;
+				static_assert(sizeof(int) == sizeof(int*));
+				std::unique_ptr<Params> p{ reinterpret_cast<Params*>(pValues) };
+				std::invoke(std::move(std::get<I>(*p))...);
+			}
+
+			template<typename Params, size_t... I>
+			static auto GetWorkerInvoke(std::index_sequence<I...>)
+			{
+				return &WorkerInvoke<Params, I...>;
+			}
+
+			static void run_in_worker()
+			{
+				printf("Hello from wasm worker!\n");
+			}
+
+
+			template<typename Func, typename... Args>
+			explicit Worker(Func&& f, Args&&... args) 
+				: m_Worker(emscripten_malloc_wasm_worker(/*stack size: */1024))
+			{
+				assert(m_Worker > 0);
+				std::cout << "m_Worker=" << m_Worker << std::endl;
+				std::cout << __FUNCTION__ << __LINE__ << std::endl;
+				using Params = std::tuple<std::decay_t<Func>, std::decay_t<Args>...>;
+				auto params = std::make_unique<Params>(std::forward<Func>(f), std::forward<Args>(args)...);
+				using Indecies = std::make_index_sequence<1 + sizeof...(Args)>;
+				emscripten_wasm_worker_post_function_v(m_Worker, &Worker::run_in_worker);
+				std::cout << __FUNCTION__ << __LINE__ << std::endl;
+				auto pFunc = GetWorkerInvoke<Params>(Indecies{});
+				std::cout << __FUNCTION__ << __LINE__ << std::endl;
+				emscripten_wasm_worker_post_function_vi(m_Worker, pFunc, reinterpret_cast<int>(params.release()));
+				std::cout << __FUNCTION__ << __LINE__ << std::endl;
+			}
+
+
+			Worker(Worker&& other) noexcept
+				: m_Worker(std::exchange(other.m_Worker, {}))
+			{
+
+			}
+
+			Worker& operator=(Worker&& other) noexcept
+			{
+				assert(m_Worker == emscripten_wasm_worker_self_id());
+				m_Worker = std::exchange(other.m_Worker, {});
+				return *this;
+			}
+
+			~Worker() noexcept
+			{
+				if (m_Worker > 0)
+				{
+					//emscripten_terminate_wasm_worker(m_Worker);
+				}
+			}
+
+			Worker(const Worker&) = delete;
+			Worker& operator=(const Worker&) = delete;
+
+			bool joinable() const noexcept
+			{
+				return false;
+			}
+
+			void join()
+			{
+
+			}
+
+			emscripten_wasm_worker_t m_Worker = 0;
+		};
+#endif
 	public:
 		using Task = std::function<void()>;
 
 		SimpleThreadPool(size_t threads)
 		{
 			m_Threads.reserve(threads);
+			std::cout << "Threads: " << threads << std::endl;
 			for (size_t i = 0; i < threads; ++i)
 			{
+#ifdef __EMSCRIPTEN__
+				std::cout << __FUNCTION__ << __LINE__ << std::endl;
+				m_Threads.push_back(Worker(&SimpleThreadPool::DoWork, this));
+#else
 				m_Threads.push_back(std::thread(&SimpleThreadPool::DoWork, this));
+#endif
 			}
+			std::cout << __FUNCTION__ << __LINE__ << std::endl;
 		}
 
 		~SimpleThreadPool()
@@ -70,6 +165,7 @@ namespace beam
 
 		void DoWork()
 		{
+			std::cout << __FUNCTION__ << __LINE__ << std::endl;
 			while (true)
 			{
 				Task t;
@@ -84,6 +180,7 @@ namespace beam
 				}
 				try
 				{
+					std::cout << __FUNCTION__ << __LINE__ << std::endl;
 					t();
 				}
 				catch (const std::exception& ex)
@@ -98,7 +195,11 @@ namespace beam
 		}
 
 	private:
+#ifdef __EMSCRIPTEN__
+		std::vector<Worker> m_Threads;
+#else
 		std::vector<std::thread> m_Threads;
+#endif
 		std::queue<Task> m_Tasks;
 		std::mutex m_Mutex;
 		std::condition_variable m_NewTask;
@@ -255,15 +356,24 @@ namespace beam
 			std::invoke(std::get<I>(p)...);
 		}
 
+		static size_t MyHardwareConcurrency()
+		{
+#ifdef __EMSCRIPTEN__
+			return static_cast<size_t>(emscripten_navigator_hardware_concurrency());
+#else
+			return std::thread::hardware_concurrency();
+#endif
+		}
+
 		static size_t GetCoresNum()
 		{
 #ifdef BEAM_WEB_WALLET_THREADS_NUM
 			auto s = static_cast<size_t>(BEAM_WEB_WALLET_THREADS_NUM);
-			if (std::thread::hardware_concurrency() >= s)
+			if (MyHardwareConcurrency() >= s)
 				return s;
 #endif // BEAM_WEB_WALLET_THREADS_NUM
 
-			return  std::thread::hardware_concurrency();
+			return MyHardwareConcurrency();
 		}
 
 	private:

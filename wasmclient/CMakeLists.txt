@@ -35,15 +35,17 @@ if(EMSCRIPTEN)
 
     set_target_properties(${TARGET_NAME}
         PROPERTIES COMPILE_FLAGS "-s PROXY_TO_PTHREAD=0 \
-                                  -s USE_PTHREADS=1 \
-                                  -s WASM_WORKERS=0 \
+                                  -s USE_PTHREADS=0 \
+                                  -s WASM_WORKERS=1 \
                                   -s DISABLE_EXCEPTION_CATCHING=0 \
                                   -s STRICT=0"
         LINK_FLAGS " \
                    --bind --no-entry -v \
+                   -s ENVIRONMENT=web,worker \
                    -s FORCE_FILESYSTEM=1 \
                    -s WEBSOCKET_URL=wss:// \
                    -s WASM_BIGINT=0 \
+                   -s EXCEPTION_DEBUG=1 \
                    -s STRICT=0 \
                    -s DEMANGLE_SUPPORT=0 \
                    -s PTHREADS_DEBUG=0 \
@@ -51,8 +53,8 @@ if(EMSCRIPTEN)
                    -s SOCKET_DEBUG=0 \
                    -s DISABLE_EXCEPTION_CATCHING=0 \
                    -s VERBOSE=1 \
-                   -s USE_PTHREADS=1 \
-                   -s WASM_WORKERS=0 \
+                   -s USE_PTHREADS=0 \
+                   -s WASM_WORKERS=1 \
                    -s WASM=1 \
                    -s ERROR_ON_UNDEFINED_SYMBOLS=1 \
                    -s MODULARIZE=1 \
@@ -62,8 +64,7 @@ if(EMSCRIPTEN)
                    -s DYNAMIC_EXECUTION=0 \
                    -s USE_BOOST_HEADERS=1 \
                    -s ASSERTIONS=1 \
-                   -s PTHREAD_POOL_SIZE='window.navigator.hardwareConcurrency < ${BEAM_WEB_WALLET_THREADS_NUM} ? \
-                                                            window.navigator.hardwareConcurrency : ${BEAM_WEB_WALLET_THREADS_NUM}' \
+                   -s PTHREAD_POOL_SIZE='${BEAM_WEB_WALLET_THREADS_NUM}' \
                    -s EXPORT_NAME='BeamModule' \
                    -s EXPORTED_RUNTIME_METHODS=[\"UTF8ToString\",\"FS\"] \
                    -s WEBSOCKET_SUBPROTOCOL='null' \
